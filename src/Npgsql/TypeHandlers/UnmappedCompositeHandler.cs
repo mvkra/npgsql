@@ -10,6 +10,7 @@ using Npgsql.PostgresTypes;
 using Npgsql.TypeHandling;
 using Npgsql.TypeMapping;
 using NpgsqlTypes;
+using System.Linq.Expressions;
 #if !NETSTANDARD1_3
 using System.Dynamic;
 #endif
@@ -240,12 +241,12 @@ namespace Npgsql.TypeHandlers
                 switch (typeMember)
                 {
                 case PropertyInfo p:
-                    member.Getter = composite => p.GetValue(composite);
-                    member.Setter = (composite, v) => p.SetValue(composite, v);
+                    member.Getter = (MemberValueGetter) Delegate.CreateDelegate(typeof(MemberValueGetter), null, p.GetGetMethod());
+                    member.Setter = (MemberValueSetter) Delegate.CreateDelegate(typeof(MemberValueSetter), null, p.GetSetMethod());
                     break;
                 case FieldInfo f:
-                    member.Getter = composite => f.GetValue(composite);
-                    member.Setter = (composite, v) => f.SetValue(composite, v);
+                    member.Getter = BuildFieldValueGetter(type, f);
+                    member.Setter = BuildFieldValueSetter(type, f);
                     break;
                 default:
                     throw new Exception($"PostgreSQL composite type {PgDisplayName} contains field {member.PgName} which cannot map to CLR type {type.Name}'s field {typeMember.Name} of type {member.GetType().Name}");
@@ -286,6 +287,28 @@ namespace Npgsql.TypeHandlers
             internal MemberValueGetter Getter;
             internal MemberValueSetter Setter;
         }
+
+        static private MemberValueGetter BuildFieldValueGetter(Type type, FieldInfo field)
+        {
+            var ownerParameter = Expression.Parameter(typeof(object));
+            var fieldExpression = Expression.Field(Expression.Convert(ownerParameter, type), field);
+            var getFunc = Expression.Lambda<Func<object, object>>(Expression.Convert(fieldExpression, typeof(object)), ownerParameter).Compile();
+            return (composite => getFunc(composite));
+        }
+
+        static private MemberValueSetter BuildFieldValueSetter(Type type, FieldInfo field)
+        {
+            var ownerParameter = Expression.Parameter(typeof(object));
+            var fieldParameter = Expression.Parameter(typeof(object));
+            var fieldExpression = Expression.Field(Expression.Convert(ownerParameter, type), field);
+            var setFunc = 
+                Expression.Lambda<Action<object, object>>(
+                    Expression.Assign(fieldExpression,
+                        Expression.Convert(fieldParameter, field.FieldType)), 
+                    ownerParameter, fieldParameter).Compile();
+            return ((composite, v) => setFunc(composite, v));
+        }
+
 
         #endregion
     }
