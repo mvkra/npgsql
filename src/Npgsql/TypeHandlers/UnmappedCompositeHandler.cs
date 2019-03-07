@@ -241,8 +241,8 @@ namespace Npgsql.TypeHandlers
                 switch (typeMember)
                 {
                 case PropertyInfo p:
-                    member.Getter = (MemberValueGetter) Delegate.CreateDelegate(typeof(MemberValueGetter), null, p.GetGetMethod());
-                    member.Setter = (MemberValueSetter) Delegate.CreateDelegate(typeof(MemberValueSetter), null, p.GetSetMethod());
+                    member.Getter = BuildPropertyGetter(type, p);
+                    member.Setter = BuildPropertySetter(type, p);
                     break;
                 case FieldInfo f:
                     member.Getter = BuildFieldValueGetter(type, f);
@@ -293,7 +293,7 @@ namespace Npgsql.TypeHandlers
             var ownerParameter = Expression.Parameter(typeof(object));
             var fieldExpression = Expression.Field(Expression.Convert(ownerParameter, type), field);
             var getFunc = Expression.Lambda<Func<object, object>>(Expression.Convert(fieldExpression, typeof(object)), ownerParameter).Compile();
-            return (composite => getFunc(composite));
+            return new MemberValueGetter(getFunc.Invoke);
         }
 
         static private MemberValueSetter BuildFieldValueSetter(Type type, FieldInfo field)
@@ -306,9 +306,31 @@ namespace Npgsql.TypeHandlers
                     Expression.Assign(fieldExpression,
                         Expression.Convert(fieldParameter, field.FieldType)), 
                     ownerParameter, fieldParameter).Compile();
-            return ((composite, v) => setFunc(composite, v));
+            return new MemberValueSetter(setFunc.Invoke);
         }
 
+        static private MemberValueGetter BuildPropertyGetter(Type t, PropertyInfo propertyInfo)
+        {
+            var ownerParameter = Expression.Parameter(typeof(object));
+            var fieldExpression = Expression.Property(Expression.Convert(ownerParameter, t), propertyInfo);
+            var getFunc = Expression.Lambda<Func<object, object>>(Expression.Convert(fieldExpression, typeof(object)), ownerParameter).Compile();
+            return new MemberValueGetter(getFunc.Invoke);
+        }
+
+        static private MemberValueSetter BuildPropertySetter(Type t, PropertyInfo propertyInfo)
+        { 
+            var ownerParameter = Expression.Parameter(typeof(object));
+            var fieldParameter = Expression.Parameter(typeof(object));
+            var fieldExpression = Expression.Property(Expression.Convert(ownerParameter, t), propertyInfo);
+            var setFunc = 
+                Expression.Lambda<Action<object, object>>(
+                    Expression.Assign(
+                        fieldExpression,
+                        Expression.Convert(fieldParameter, propertyInfo.PropertyType)), 
+                    ownerParameter,
+                    fieldParameter).Compile();
+            return new MemberValueSetter(setFunc.Invoke);
+        }
 
         #endregion
     }
